@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<body>
+<canvas id="c512" width="512" height="512"></canvas>
+<canvas id="c192" width="192" height="192"></canvas>
+<script>
+function draw(canvas) {
+  const ctx = canvas.getContext('2d');
+  const s = canvas.width;
+  // Black background
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, s, s);
+  // Amber diamond
+  ctx.fillStyle = '#F59E0B';
+  ctx.beginPath();
+  ctx.moveTo(s * 0.5, s * 0.15);
+  ctx.lineTo(s * 0.85, s * 0.5);
+  ctx.lineTo(s * 0.5, s * 0.85);
+  ctx.lineTo(s * 0.15, s * 0.5);
+  ctx.closePath();
+  ctx.fill();
+}
+draw(document.getElementById('c512'));
+draw(document.getElementById('c192'));
+// Right-click and save as icon-512.png and icon-192.png
+</script>
+<p>Right-click each canvas and "Save image as" to public/icon-512.png and public/icon-192.png</p>
+</body>
+</html>

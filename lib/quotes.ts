@@ -1,0 +1,17 @@
+export const nudgeQuotes = [
+  "Your brain wants novelty. Give it depth instead.",
+  "One project. One hour. That's the whole game.",
+  "Switching costs more than struggling.",
+  "The urge to start something new is the old thing working.",
+  "Ship this first. The next idea will wait.",
+  "Focus isn't about willpower. It's about removing choices.",
+  "You don't need motivation. You need momentum.",
+  "Twenty-five minutes. That's all. Then decide.",
+  "The dopamine is in the finishing.",
+  "Less open tabs. More shipped projects.",
+  "Your future self will thank present you for staying.",
+  "Boredom is the bridge between starting and mastering.",
+  "Deep work isn't natural. Do it anyway.",
+  "The best productivity hack is finishing what you started.",
+  "You're not behind. You're building.",
+]
