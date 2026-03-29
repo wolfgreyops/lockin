@@ -1,0 +1,26 @@
+{
+  "name": "@lockin/cli",
+  "version": "0.1.0",
+  "description": "LOCKIN CLI — Focus management from your terminal",
+  "type": "module",
+  "bin": {
+    "lockin": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@lockin/core": "workspace:*",
+    "@supabase/supabase-js": "^2.100.1",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "open": "^10.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.0",
+    "typescript": "^5"
+  }
+}

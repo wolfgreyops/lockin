@@ -1,203 +1,343 @@
-# LOCKIN — Claude Code Build Plan
-### Stack: Next.js 14 (App Router) + Supabase + Vercel
+# LOCKIN — Claude Code Build Plan (v2)
+### Three surfaces, one brain: Next.js + Tauri Menu Bar + CLI → Supabase → Vercel
 
 ---
 
-## Phase 0: Project Scaffold
-**Prompt Claude Code:**
-> Initialize a Next.js 14 app with App Router, TypeScript, Tailwind CSS, and the Supabase JS client. Use pnpm. Set up the folder structure: `app/`, `components/`, `lib/`, `types/`, `hooks/`. Add a `.env.local` with placeholders for NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY. Install @supabase/supabase-js and @supabase/ssr.
-
-**Then:**
-> Create a Supabase client utility at `lib/supabase/client.ts` for browser usage and `lib/supabase/server.ts` for server components. Follow the latest @supabase/ssr pattern with cookies.
-
-**Verify:** `pnpm dev` runs on localhost:3000.
-
----
-
-## Phase 1: Supabase Schema
-**Go to your Supabase dashboard or prompt Claude Code:**
-> Write a Supabase migration SQL file at `supabase/migrations/001_initial_schema.sql` that creates these tables:
+## Architecture Overview
 
 ```
-profiles
-  - id (uuid, FK to auth.users, PK)
-  - display_name (text)
-  - timer_duration (int, default 25)
-  - created_at (timestamptz)
-
-projects
-  - id (uuid, PK, default gen_random_uuid())
-  - user_id (uuid, FK to profiles.id)
-  - name (text, not null)
-  - next_action (text)
-  - objective (text)
-  - status (text, default 'active') — active | paused | shipped
-  - priority (text, default 'medium') — high | medium | low
-  - notes (text)
-  - context_dump (text)
-  - estimated_minutes (int, default 0)
-  - total_minutes (int, default 0)
-  - created_at (timestamptz)
-  - updated_at (timestamptz)
-
-sessions
-  - id (uuid, PK)
-  - user_id (uuid, FK)
-  - project_id (uuid, FK to projects.id)
-  - duration (int, not null) — minutes
-  - estimated (int)
-  - action (text)
-  - date (date, not null)
-  - created_at (timestamptz)
-
-daily_plans
-  - id (uuid, PK)
-  - user_id (uuid, FK)
-  - date (date, not null)
-  - planned_project_ids (uuid[])
-  - estimates (jsonb) — { "project_id": minutes }
-  - committed (boolean, default false)
-  - created_at (timestamptz)
-  - UNIQUE(user_id, date)
-
-shutdown_log
-  - id (uuid, PK)
-  - user_id (uuid, FK)
-  - date (date, not null)
-  - completed (boolean, default true)
-  - created_at (timestamptz)
-  - UNIQUE(user_id, date)
+┌─────────────────────────────────────────────────────┐
+│                    SUPABASE                         │
+│  projects · sessions · daily_plans · shutdown_log   │
+│  Auth (email + Google) · RLS · Realtime             │
+└──────────┬──────────────┬──────────────┬────────────┘
+           │              │              │
+     ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
+     │  Next.js  │ │   Tauri   │ │    CLI    │
+     │  Web App  │ │ Menu Bar  │ │ Terminal  │
+     │           │ │           │ │           │
+     │ Planning  │ │ Passive   │ │ Active    │
+     │ Rituals   │ │ Awareness │ │ Logging   │
+     │ Review    │ │ Timer     │ │ Status    │
+     │ CRUD      │ │ Nudges    │ │ Quick Ops │
+     └───────────┘ └───────────┘ └───────────┘
+           │              │              │
+     ┌─────▼──────────────▼──────────────▼────────────┐
+     │     Builder in terminal running Claude Code     │
+     │     Menu bar visible · CLI in same shell        │
+     │     Web open only for morning + evening ritual  │
+     └────────────────────────────────────────────────┘
 ```
 
-> Add Row Level Security policies: users can only SELECT, INSERT, UPDATE, DELETE their own rows (where user_id = auth.uid()). Enable RLS on all tables.
-
-**Run:** `supabase db push` or apply via dashboard.
+**When each surface gets used:**
+- **6:30am** → Open web app → Morning Lockdown ritual → close tab
+- **6:45am** → Open terminal → `lockin start wolfgrey` → menu bar starts ticking
+- **All day** → Glance at menu bar timer · get nudge notifications · `lockin done` / `lockin start mypruf` between sessions
+- **5:30pm** → Open web app → Evening Shutdown ritual → close laptop
 
 ---
 
-## Phase 2: Auth
+## Phase 0: Monorepo Scaffold
+
 **Prompt Claude Code:**
-> Add Supabase Auth with email/password and Google OAuth. Create `app/(auth)/login/page.tsx` and `app/(auth)/signup/page.tsx` with a dark theme login form matching this style: background #0a0a0a, amber (#F59E0B) accents, monospace font (JetBrains Mono from Google Fonts). After successful auth, redirect to `/dashboard`. Create a middleware.ts that protects all routes except /login and /signup.
+> Set up a pnpm monorepo with three packages:
+> - `apps/web` — Next.js 14 (App Router, TypeScript, Tailwind)
+> - `apps/menubar` — Tauri v2 app with React + Vite frontend
+> - `apps/cli` — Node.js CLI with TypeScript
+> - `packages/core` — shared Supabase client, types, and constants
+>
+> In `packages/core`, create:
+> - `lib/supabase.ts` — browser client (for web + Tauri)
+> - `lib/supabase-node.ts` — Node.js client (for CLI)
+> - `types/index.ts` — shared TypeScript types for all tables
+> - `constants.ts` — priorities, nudge messages, timer defaults
+>
+> Root `.env` with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+> Workspace config so all three apps can import from @lockin/core.
 
-**Then:**
-> Create a `hooks/useUser.ts` hook that returns the current Supabase user and a loading state. Create an auth context provider at `components/providers/auth-provider.tsx`.
-
-**Verify:** Can sign up, log in, and get redirected to /dashboard.
+**Verify:** `pnpm dev --filter web` runs Next.js. The Tauri and CLI apps don't need to work yet.
 
 ---
 
-## Phase 3: Core Layout + Dashboard
+## Phase 1: Supabase Schema + Auth
+
 **Prompt Claude Code:**
-> Create the app layout at `app/(app)/layout.tsx` — full dark theme, max-width 600px centered, monospace font. Create `app/(app)/dashboard/page.tsx` as a client component that fetches the user's active projects from Supabase ordered by priority (high first), and renders them as cards with: name, next action, objective, priority color bar on left (high=#F59E0B, medium=#6B7280, low=#374151), total minutes logged, and a "LOCK IN" button. Include the header with the LOCKIN logo and timer duration selector. Add the nudge bar that shows a random ADHD-friendly motivational quote on each load.
+> Write a Supabase migration at `supabase/migrations/001_initial_schema.sql`:
 
-**Then:**
-> Add the three ritual trigger buttons below the nudge bar: Morning Lockdown (☀), Shutdown (☾), and Review (◷). Morning highlights amber before noon, Shutdown highlights purple after 5pm, both show green when completed for today. Query daily_plans and shutdown_log for today's date to determine state.
+```sql
+-- profiles
+create table profiles (
+  id uuid primary key references auth.users,
+  display_name text,
+  timer_duration int default 25,
+  created_at timestamptz default now()
+);
+
+-- projects
+create table projects (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) not null,
+  name text not null,
+  next_action text,
+  objective text,
+  status text default 'active' check (status in ('active','paused','shipped')),
+  priority text default 'medium' check (priority in ('high','medium','low')),
+  notes text,
+  context_dump text,
+  estimated_minutes int default 0,
+  total_minutes int default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- sessions
+create table sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) not null,
+  project_id uuid references projects(id) not null,
+  duration int not null,
+  estimated int,
+  action text,
+  date date not null default current_date,
+  created_at timestamptz default now()
+);
+
+-- daily_plans
+create table daily_plans (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) not null,
+  date date not null,
+  planned_project_ids uuid[],
+  estimates jsonb,
+  committed boolean default false,
+  created_at timestamptz default now(),
+  unique(user_id, date)
+);
+
+-- shutdown_log
+create table shutdown_log (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references profiles(id) not null,
+  date date not null,
+  completed boolean default true,
+  created_at timestamptz default now(),
+  unique(user_id, date)
+);
+
+-- RLS
+alter table profiles enable row level security;
+alter table projects enable row level security;
+alter table sessions enable row level security;
+alter table daily_plans enable row level security;
+alter table shutdown_log enable row level security;
+
+create policy "own data" on profiles for all using (id = auth.uid());
+create policy "own data" on projects for all using (user_id = auth.uid());
+create policy "own data" on sessions for all using (user_id = auth.uid());
+create policy "own data" on daily_plans for all using (user_id = auth.uid());
+create policy "own data" on shutdown_log for all using (user_id = auth.uid());
+```
+
+> Then add auth to the web app: email/password + Google OAuth. Create login and signup pages at `apps/web/app/(auth)/login/page.tsx` and `signup/page.tsx`. Dark theme matching LOCKIN design (bg #0a0a0a, amber accents, JetBrains Mono). Middleware protecting all routes except /login and /signup.
+
+**Run:** `supabase db push`
+**Verify:** Can sign up, log in, redirect to /dashboard.
 
 ---
 
-## Phase 4: Project CRUD
+## Phase 2: Tauri Menu Bar App
+
+This is the highest-impact surface. Build it early.
+
 **Prompt Claude Code:**
-> Create `app/(app)/project/new/page.tsx` — a form to create a new project with fields: name, next action, objective, priority (toggle buttons), and notes. On submit, insert into Supabase projects table and redirect to /dashboard. Style matches dark theme with amber accent buttons.
+> In `apps/menubar`, set up a Tauri v2 app configured as a macOS menu bar / system tray application. Use the Tauri system tray API. The app should:
+>
+> 1. Show a tray icon (amber diamond ◆ or a simple "L" icon)
+> 2. Clicking the tray icon opens a small popover window (320x400px, no title bar, always on top)
+> 3. The popover uses React + Vite and imports the Supabase client from @lockin/core
+>
+> The popover UI should show (dark theme, #0a0a0a bg, amber accents, JetBrains Mono):
+> - Current project name (or "No active session")
+> - Big countdown timer (MM:SS)
+> - Start / Pause / Reset buttons
+> - The current next_action for the focused project
+> - A random nudge message from the shared constants
+> - A "Switch Project" dropdown listing active projects
+>
+> Auth: On first launch, open a login window that does Supabase auth (email/password). Store the session token in the system keychain via Tauri's secure storage plugin. After auth, close the login window and show the tray icon.
 
-> Create `app/(app)/project/[id]/edit/page.tsx` — same form but loads existing project data, updates on submit. Add a DELETE button with confirmation.
+**Then prompt:**
+> Add macOS native notifications via Tauri's notification plugin:
+> - When a timer session completes: "Session complete! [project name] — [duration]min logged"
+> - If no session has been started by 9am: "Morning lockdown reminder — plan your day"
+> - When the user has been in a session for 5+ hours without a break: "Take a break. The code will be here when you get back."
+>
+> Also: update the tray icon title text to show the live timer countdown so it's visible in the menu bar itself — e.g. "◆ 14:32" that updates every second while a session is running.
 
-> On the dashboard, wire the ✎ button to navigate to /project/[id]/edit and the + ADD button to /project/new.
+**Then prompt:**
+> When the timer completes or the user clicks "Done":
+> - Insert a session row into Supabase
+> - Update the project's total_minutes
+> - Show a brief "✓ Logged" confirmation in the popover
+> - Reset the timer
+
+**Verify:** Menu bar shows diamond icon. Clicking opens popover with timer. Timer ticks in the menu bar text. Notifications fire. Sessions log to Supabase.
 
 ---
 
-## Phase 5: Focus Mode + Timer
+## Phase 3: CLI Companion
+
 **Prompt Claude Code:**
-> Create `app/(app)/focus/[id]/page.tsx` — the focus view. Fetch the project by ID. Show: project name, objective, context dump banner (if exists, purple background with "WHERE YOU LEFT OFF" label), SVG ring timer, start/pause/reset controls, current task input (updates project.next_action on blur), scratch pad textarea (updates project.notes on blur), stats row (total minutes, session count, estimated minutes). Timer state is client-side only — use useState and useInterval.
+> In `apps/cli`, build a Node.js CLI tool called `lockin` using Commander.js. It imports the Supabase Node client from @lockin/core. Commands:
+>
+> **Auth:**
+> `lockin login` — opens a browser window for Supabase auth, stores the refresh token in ~/.lockin/credentials.json
+>
+> **Core commands:**
+> `lockin status` — shows current focus project, timer state, next action, and today's plan
+> `lockin start [project-name]` — starts a focus session on the named project (fuzzy matches against active projects). Prints the project name, next action, and starts a visible timer in the terminal
+> `lockin done` — ends the current session, logs duration to Supabase, shows total logged today
+> `lockin next` — shows the next planned project from today's daily plan
+> `lockin projects` — lists all active projects with priority, next action, and total minutes
+> `lockin ship [project-name]` — marks a project as shipped
+>
+> **Timer display:**
+> When `lockin start` is running, show a live updating line in the terminal:
+> `◆ LOCKED IN: wolfgrey.ai → "fix auth redirect" [14:32]`
+> Update every second using process.stdout.write with \r carriage return.
+> On Ctrl+C, prompt "Log this session? (y/n)" before exiting.
+>
+> Style the output using chalk: amber for accents, white for text, gray for secondary info. Keep it minimal and fast.
 
-> When the timer completes: insert a row into sessions table (duration = timer setting, project_id, date = today, action = current next_action), and update the project's total_minutes by adding the session duration. Show a brief completion flash. Reset timer automatically.
+**Then prompt:**
+> Add tmux integration:
+> `lockin tmux` — outputs a formatted string for tmux status-right. User adds this to their .tmux.conf:
+> `set -g status-right "#(lockin tmux)"`
+> The output should be: "◆ wolfgrey.ai 14:32" when a session is active, or "◆ no session" when idle.
+> Read state from a local file (~/.lockin/state.json) that the `lockin start` and `lockin done` commands update, so the tmux call is instant (no Supabase round-trip).
 
-> Add a "MARK AS SHIPPED" button that updates project.status to 'shipped' and redirects to /dashboard.
+**Then prompt:**
+> Create the npm package config so the CLI can be installed globally:
+> `npm install -g @lockin/cli`
+> Or run directly: `npx @lockin/cli status`
+
+**Verify:** `lockin login` → `lockin start wolfgrey` → timer ticks in terminal → `lockin done` → session appears in Supabase. tmux status bar shows project name.
 
 ---
 
-## Phase 6: Morning Lockdown Ritual
+## Phase 4: Web Dashboard
+
 **Prompt Claude Code:**
-> Create `app/(app)/morning/page.tsx` — a 3-step guided flow.
-
-> Step 1 (SELECT): Show all active projects as selectable cards. User can pick 1-3. Show priority badge and objective on each. Disable selection after 3 are chosen.
-
-> Step 2 (ESTIMATE): For each selected project, show time estimate buttons (15m, 30m, 45m, 1h, 1.5h, 2h). Show running total at bottom with feedback: green "Looks achievable" under 6h, amber "Heavy day" 6-8h, red "Be realistic" over 8h. Include the callout: "Your ADHD brain will underestimate. Add 50%."
-
-> Step 3 (COMMIT): Show final numbered list with estimates. "LOCK IN MY DAY" button upserts a daily_plans row for today with planned_project_ids, estimates jsonb, and committed=true. Also update each project's estimated_minutes. Redirect to /dashboard.
-
-> Add step indicators at top (numbered dots, active = amber, done = checkmark).
+> Create `apps/web/app/(app)/dashboard/page.tsx`. Fetch active projects from Supabase ordered by priority. Render project cards with: name, next action, objective, priority color bar, total minutes, "LOCK IN" button (which starts a session that syncs to menu bar + CLI via Supabase realtime). Show the nudge bar, ritual trigger buttons (Morning Lockdown, Shutdown, Review), and today's plan if committed.
+>
+> Subscribe to Supabase Realtime on the sessions table so the dashboard updates live when the menu bar or CLI logs a session.
 
 ---
 
-## Phase 7: Evening Shutdown Ritual
+## Phase 5: Project CRUD (Web)
+
 **Prompt Claude Code:**
-> Create `app/(app)/shutdown/page.tsx` — 3-step guided flow with purple (#6366f1) accent.
-
-> Step 1 (REVIEW): Query today's sessions, group by project. Show actual minutes vs estimated (from daily_plans). Color code: green if under estimate, red if over by 20%+.
-
-> Step 2 (CAPTURE): For each project worked on today (or planned), show a textarea pre-filled with existing context_dump. User writes where they left off. These are specific prompts — "What were you working on? What's the next step? Any blockers?"
-
-> Step 3 (CLOSE): Motivational close screen with total minutes worked. "SHUT IT DOWN" button saves all context_dumps to their respective projects and inserts a shutdown_log row. Redirect to /dashboard.
+> Create project/new and project/[id]/edit pages. Fields: name, next action, objective, priority, notes. Dark theme, amber accents. DELETE with confirmation. Wire + ADD and ✎ buttons on dashboard.
 
 ---
 
-## Phase 8: Weekly Review
+## Phase 6: Focus Mode (Web)
+
 **Prompt Claude Code:**
-> Create `app/(app)/review/page.tsx`. Week navigator (prev/next buttons, current week label). Query sessions for the selected week.
-
-> Show: total focus time (large amber number), time-by-project horizontal bar chart (Tailwind-only, no chart library — use div widths as percentages), daily activity heatmap (7 squares, amber opacity based on minutes — 0 = dark, 120+ = full), and estimated vs actual comparison table with percentage deltas (red if over, green if under).
-
-> All data comes from Supabase queries filtered by date range.
+> Create focus/[id] page. This is a web-based focus view as a fallback when the menu bar app isn't available. Show: project name, objective, context dump banner, SVG ring timer, start/pause/reset, current task input, scratch pad, stats. On timer complete, log session and update project. Include MARK AS SHIPPED button.
 
 ---
 
-## Phase 9: Today's Plan on Dashboard
+## Phase 7: Morning Lockdown Ritual (Web)
+
 **Prompt Claude Code:**
-> On the dashboard, if a daily_plan exists for today with committed=true, show a "TODAY'S PLAN" section above the full active projects list. Each planned project card shows: estimated minutes, actual minutes logged today (query sessions where date=today and project_id matches), and a LOCK IN button. Color the actual minutes green if under estimate, red if over.
+> Create morning lockdown flow — 3 steps: SELECT (pick 1-3 projects from active list), ESTIMATE (time buttons per project with reality-check feedback), COMMIT (lock in the day plan). Upsert daily_plans row. Step indicators with amber dots.
+>
+> After commit, the menu bar app and CLI can read today's plan and show what's queued.
 
 ---
 
-## Phase 10: Real-time Updates (Optional)
+## Phase 8: Evening Shutdown Ritual (Web)
+
 **Prompt Claude Code:**
-> Add Supabase Realtime subscriptions on the dashboard for the projects table. When a project is updated (e.g. from focus mode in another tab), the dashboard reflects the change without refresh. Use the useEffect + supabase.channel pattern.
+> Create shutdown flow — 3 steps with purple (#6366f1) accent: REVIEW (actual vs estimated), CAPTURE (context dump per project — "Where'd you leave off?"), CLOSE (motivational close + save context dumps to projects + insert shutdown_log row).
+>
+> After shutdown, the menu bar app should show "Day closed ✓" and stop prompting for sessions.
 
 ---
 
-## Phase 11: Deploy to Vercel
+## Phase 9: Weekly Review (Web)
+
 **Prompt Claude Code:**
-> Create a vercel.json if needed. Make sure all environment variables are set: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY. Push to GitHub. Deploy via Vercel CLI or dashboard. Set up the production domain.
-
-**Manual steps:**
-1. Go to Vercel → Import repo
-2. Add env vars in Vercel project settings
-3. In Supabase dashboard → Auth → URL Configuration → add your Vercel production URL as a redirect URL
-4. Deploy
+> Create review page. Week navigator. Total focus time, time-by-project bars, daily heatmap, estimated vs actual comparison. All from Supabase session queries filtered by date range.
 
 ---
 
-## Phase 12: PWA + Mobile
+## Phase 10: Deploy
+
+**Web app:**
+> Push apps/web to GitHub. Deploy to Vercel. Add env vars. Add Vercel production URL as Supabase auth redirect.
+
+**Menu bar app:**
+> Use `tauri build` to create a .dmg for macOS. For now, distribute via GitHub Releases or direct download link from the LOCKIN website. Later: notarize for macOS Gatekeeper.
+
+**CLI:**
+> Publish to npm as @lockin/cli. Users install with `npm i -g @lockin/cli`.
+
+---
+
+## Phase 11: PWA Fallback (Web)
+
 **Prompt Claude Code:**
-> Add a `manifest.json` for PWA support — app name "LOCKIN", theme color #0a0a0a, background #0a0a0a, display standalone. Add a service worker for offline caching of the app shell. Add meta tags for iOS home screen support. Create a simple 512x512 app icon — amber diamond on black background.
-
-This makes it installable on phone home screens as a standalone app without an app store.
+> Add manifest.json for PWA support — "LOCKIN", #0a0a0a theme, standalone display. Service worker for offline app shell. iOS home screen meta tags. Simple 512x512 amber diamond icon. This makes the web app installable on phones without an app store.
 
 ---
 
-## CLAUDE.md for the Project
+## Build Order + Effort Estimates
 
-Save this in the repo root so Claude Code has context on every session:
+| Phase | Surface | What | Prompts | Time |
+|-------|---------|------|---------|------|
+| 0 | All | Monorepo scaffold | 1 | 30min |
+| 1 | All | Schema + Auth | 2 | 1hr |
+| **2** | **Menu bar** | **Tauri tray app + timer + notifications** | **3** | **3hr** |
+| **3** | **CLI** | **Terminal commands + tmux integration** | **3** | **2hr** |
+| 4 | Web | Dashboard + realtime | 1 | 1hr |
+| 5 | Web | Project CRUD | 1 | 45min |
+| 6 | Web | Focus mode | 1 | 1hr |
+| 7 | Web | Morning lockdown | 1 | 1.5hr |
+| 8 | Web | Evening shutdown | 1 | 1.5hr |
+| 9 | Web | Weekly review | 1 | 1hr |
+| 10 | All | Deploy (Vercel + .dmg + npm) | 2 | 1hr |
+| 11 | Web | PWA | 1 | 30min |
+
+**Total: ~18 prompts, ~14 hours of build time across a weekend.**
+
+Phases 2 and 3 (menu bar + CLI) are the differentiators. A builder can be productive with JUST those two + Supabase on day one. The web app rituals are the compounding layer you add next.
+
+---
+
+## CLAUDE.md (Save in repo root)
 
 ```markdown
 # LOCKIN
 
 ## What this is
-A focus management tool for builders shipping software with AI tools (Claude Code, Cursor, etc). Built for people with ADHD who start too many projects and finish too few.
+Focus management tool for builders using AI coding tools (Claude Code, Cursor, etc).
+Built for people with ADHD who start too many projects and finish too few.
+Three surfaces: web app (planning), menu bar (awareness), CLI (terminal-native).
+
+## Monorepo structure
+- apps/web — Next.js 14, App Router, TypeScript, Tailwind, Vercel
+- apps/menubar — Tauri v2, React + Vite, macOS menu bar app
+- apps/cli — Node.js CLI, Commander.js, chalk
+- packages/core — shared Supabase client, types, constants
 
 ## Stack
-- Next.js 14 (App Router, TypeScript)
-- Supabase (Postgres, Auth, RLS)
-- Tailwind CSS
-- Vercel (hosting)
+- Supabase (Postgres, Auth, RLS, Realtime)
+- Tauri v2 (menu bar app, ~5MB bundle)
+- Next.js 14 (web dashboard)
+- Vercel (web hosting)
+- npm (CLI distribution)
 
 ## Design system
 - Background: #0a0a0a
@@ -205,46 +345,56 @@ A focus management tool for builders shipping software with AI tools (Claude Cod
 - Borders: #1f1f1f
 - Text primary: #e5e5e5
 - Text secondary: #666666
-- Amber accent: #F59E0B (primary action, focus state)
+- Amber accent: #F59E0B (primary action, focus, timer)
 - Purple accent: #6366f1 (shutdown ritual)
 - Green accent: #22c55e (shipped, on-track)
 - Red accent: #ef4444 (over estimate, warnings)
-- Font: JetBrains Mono
-- All caps for labels/badges, letter-spacing: 2px
+- Font: JetBrains Mono (all surfaces)
+- All caps labels, letter-spacing: 2px
 - Cards have 3px left border colored by priority
 
 ## Core flows
-1. Morning Lockdown → pick 1-3 projects → estimate time → commit
-2. Dashboard → see plan → LOCK IN to focus
-3. Focus Mode → timer → ship tasks → log sessions
-4. Evening Shutdown → review day → capture context → close
-5. Weekly Review → time by project → est vs actual → heatmap
+1. Morning → Web app → pick 1-3 projects → estimate → commit
+2. Build → Terminal → `lockin start` or menu bar → timer ticks
+3. Done → `lockin done` or menu bar → session logged
+4. Evening → Web app → review → capture context → shutdown
+5. Weekly → Web app → review time allocation + accuracy
 
 ## Key rules
-- Max 3 projects per day plan
-- Timer logs to sessions table on completion
+- Max 3 projects per daily plan
+- Timer logs to sessions table on completion (from ANY surface)
 - Context dumps persist on projects, shown on next focus
 - All tables have RLS: user_id = auth.uid()
+- Menu bar reads/writes same Supabase as web and CLI
+- CLI stores local state at ~/.lockin/state.json for tmux speed
+- Notifications are native macOS via Tauri plugin
+
+## Data flow
+Menu bar timer complete → insert session → Supabase Realtime →
+web dashboard updates live. All three surfaces are eventually
+consistent through Supabase.
 ```
 
 ---
 
-## Build Order Summary
+## Quick-Start After Cloning
 
-| Phase | What | Claude Code Prompts |
-|-------|------|-------------------|
-| 0 | Scaffold | 2 prompts |
-| 1 | DB Schema | 1 prompt |
-| 2 | Auth | 2 prompts |
-| 3 | Dashboard | 2 prompts |
-| 4 | Project CRUD | 2 prompts |
-| 5 | Focus + Timer | 2 prompts |
-| 6 | Morning Ritual | 1 prompt |
-| 7 | Shutdown Ritual | 1 prompt |
-| 8 | Weekly Review | 1 prompt |
-| 9 | Dashboard Plan | 1 prompt |
-| 10 | Realtime | 1 prompt (optional) |
-| 11 | Deploy | 1 prompt + manual |
-| 12 | PWA | 1 prompt |
+```bash
+# Install dependencies
+pnpm install
 
-**~18 Claude Code prompts to production.**
+# Start web app
+pnpm dev --filter web
+
+# Start menu bar app (requires Rust toolchain)
+pnpm dev --filter menubar
+
+# Install CLI globally from local
+cd apps/cli && npm link
+
+# Test CLI
+lockin login
+lockin status
+lockin start wolfgrey
+lockin done
+```
